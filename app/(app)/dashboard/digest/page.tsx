@@ -14,8 +14,8 @@ export const dynamic = "force-dynamic";
 
 // Daily Brief — the read side of the daily-digest cron.
 //
-// One stored brief per day: what the day's tracked posts were about, the
-// strongest hook, the format that over-performed, and what to write next.
+// One stored brief per day: what the day's tracked posts were about and the
+// strongest hook of the day.
 // Written by /api/cron/daily-digest at 02:00 UTC; nothing is generated at
 // page-view time, so this page is a pure read and costs nothing to open.
 
@@ -95,7 +95,7 @@ export default async function DigestPage() {
     <PageShell>
       <PageHeader
         title="Daily Brief"
-        description="What the creators you track posted about today — the theme, the strongest hook, and the format that worked."
+        description="What the creators you track posted about today — the theme and the strongest hook."
       />
       <TodaysAgentDraft drafts={todaysDrafts} />
       {digests.length === 0 && todaysDrafts.length === 0 ? (

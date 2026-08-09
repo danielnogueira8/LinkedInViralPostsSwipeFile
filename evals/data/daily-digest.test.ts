@@ -369,9 +369,17 @@ describe("the prompt bounds its own length", () => {
     expect(DIGEST_SYSTEM_PROMPT).toMatch(/AT MOST 4 posts/);
   });
 
-  it("tells the model which sections matter most if space runs short", () => {
-    // The sections lost to truncation were 3 and 4 — the actionable half.
-    expect(DIGEST_SYSTEM_PROMPT).toMatch(/Sections 3 and 4 are the ones the reader acts on/);
+  it("tells the model which section matters most if space runs short", () => {
+    // The section lost to truncation was the last one — the actionable one.
+    expect(DIGEST_SYSTEM_PROMPT).toMatch(/Section 3 is the one the reader acts on/);
+  });
+
+  it("does not pay for a FORMAT section nobody reads", () => {
+    // The card was a label ("List") plus the same creators the theme already
+    // cited. Removing it from the page but leaving it in the prompt would keep
+    // billing for the tokens that produced it.
+    expect(DIGEST_SYSTEM_PROMPT).not.toMatch(/\bFORMAT\b/);
+    expect(DIGEST_SYSTEM_PROMPT).toMatch(/exactly these three sections/);
   });
 
   it("keeps the budget above the observed truncation ceiling", () => {
