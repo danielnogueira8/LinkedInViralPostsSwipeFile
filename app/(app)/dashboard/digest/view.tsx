@@ -25,16 +25,22 @@ export type DigestRow = {
   postCount: number;
 };
 
-// write_next is intentionally absent: the section is no longer displayed.
-// parseDigest still RECOGNISES the heading, so its text terminates the FORMAT
-// section rather than being appended to it.
+// format and write_next are intentionally absent: neither is displayed.
+//
+// "Format that worked" was a heading, a one-word answer ("List"), and three
+// creators with their engagement numbers — the same creators already cited in
+// the theme above it. A label plus a restated citation is not an insight, and
+// it pushed the parts you act on further down the page.
+//
+// parseDigest still RECOGNISES both headings, and that is load-bearing: every
+// digest already stored contains this text, so without the pattern the FORMAT
+// body would be swallowed into BEST HOOK instead of ending it.
 const SECTION_ICON: Partial<Record<DigestSectionId, typeof Quote>> = {
   theme: Telescope,
   hook: Quote,
-  format: LayoutList,
 };
 
-const DISPLAYED_SECTIONS: DigestSectionId[] = ["theme", "hook", "format"];
+const DISPLAYED_SECTIONS: DigestSectionId[] = ["theme", "hook"];
 
 /**
  * Render a body as paragraphs.

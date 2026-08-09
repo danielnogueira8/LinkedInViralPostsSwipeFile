@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   cleanInline,
@@ -37,6 +39,27 @@ describe("parseDigest — the four known sections", () => {
       "write_next",
     ]);
     expect(unmatched).toBe("");
+  });
+
+  it("still recognises FORMAT even though the page no longer shows it", () => {
+    // Load-bearing, not leftover. Every digest already stored contains a FORMAT
+    // section; drop the pattern and its body gets appended to BEST HOOK instead
+    // of ending it, so removing a card would corrupt the card above it.
+    const { sections } = parseDigest(REAL_DIGEST);
+    const hook = sections.find((s) => s.id === "hook");
+    expect(hook?.body).not.toMatch(/over-performed as a repeatable structure/);
+    expect(sections.some((s) => s.id === "format")).toBe(true);
+  });
+
+  it("keeps FORMAT out of the displayed set", () => {
+    const view = readFileSync(
+      path.join(process.cwd(), "app/(app)/dashboard/digest/view.tsx"),
+      "utf8",
+    );
+    const displayed = view.match(/const DISPLAYED_SECTIONS[^\n]*/)?.[0] ?? "";
+    expect(displayed).toContain("theme");
+    expect(displayed).toContain("hook");
+    expect(displayed).not.toContain("format");
   });
 
   it("uses our headings, not the model's casing", () => {
