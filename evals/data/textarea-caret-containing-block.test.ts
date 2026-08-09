@@ -21,6 +21,12 @@ describe("what captures fixed positioning", () => {
     // THE case that shipped. Tailwind's `translate-x-0` still emits a
     // translate, so an element that moves nothing visually still captures
     // fixed descendants. Reading the class list would suggest otherwise.
+    //
+    // "0px" is the value CHROMIUM ACTUALLY RETURNS for `translate: 0px 0px` —
+    // measured, not assumed. Pinning only the two-value form would let a
+    // predicate that misses the collapsed one pass this suite while leaving
+    // the real bug in place.
+    expect(establishesFixedContainingBlock({ translate: "0px" })).toBe(true);
     expect(establishesFixedContainingBlock({ translate: "0px 0px" })).toBe(true);
   });
 
