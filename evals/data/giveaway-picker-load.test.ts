@@ -67,6 +67,11 @@ describe("LeadShark automation shows for a lead-magnet post", () => {
   });
 
   test("the panel renders whenever the draft kind is lead_magnet", () => {
-    expect(MODAL).toContain('draft.kind === "lead_magnet" && (');
+    // The condition moved into a named flag when the editor stopped requiring
+    // a SAVED post — a new lead-magnet post reaches the automation too, by
+    // persisting itself first. Still kind-only, still no giveaway term.
+    // Full coverage of both branches lives in leadshark-editor-visibility.
+    expect(MODAL).toContain('draft?.kind === "lead_magnet"');
+    expect(MODAL).toContain("automationKindIsLeadMagnet");
   });
 });
