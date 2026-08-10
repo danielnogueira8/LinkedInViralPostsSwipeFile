@@ -22,6 +22,7 @@ import {
 } from "@/lib/draft-operations-client";
 import {
   Loader2,
+  Zap,
   ChevronUp,
   ChevronDown,
   Copy,
@@ -201,6 +202,14 @@ export function DraftEditorModal({
   // Retain that canonical id so a retry updates and schedules the same row
   // even if the parent draft prop has not reconciled yet.
   const createdDraftIdRef = useRef<string | null>(null);
+  // Draft id created specifically so the comment-to-DM panel has one to load
+  // against. In state, not just the ref above, because mounting the panel is a
+  // RENDER decision — a ref write would not re-render and the button would sit
+  // there after the post was already created.
+  const [createdForAutomationId, setCreatedForAutomationId] = useState<string | null>(
+    null,
+  );
+  const [automationStarting, setAutomationStarting] = useState(false);
   const [body, setBody] = useState(draft?.body ?? "");
   const [saving, setSaving] = useState(false);
   const [copied, markCopied] = useCopiedFlag();
@@ -368,7 +377,14 @@ export function DraftEditorModal({
       return null;
     }
     try {
-      if (initialQueueTarget && createdDraftIdRef.current) {
+      // Already created in this session → UPDATE, never create again.
+      //
+      // Was scoped to `initialQueueTarget` (the queue retry was the only way to
+      // reach persistBody twice on a new post). Setting up the automation is
+      // now a second way: it persists the draft so LeadSharkPanel has an id,
+      // and a later Save/Schedule would otherwise take the isNew branch below
+      // and write a SECOND post.
+      if (createdDraftIdRef.current) {
         const retryKind = draft?.kind ?? (newKind || undefined);
         await draftOperations.update(
           createdDraftIdRef.current,
@@ -422,6 +438,29 @@ export function DraftEditorModal({
     } catch (e) {
       toast.error((e as Error).message);
       return null;
+    }
+  };
+
+  // Kind as it stands right now — the saved kind for an existing post, the
+  // pending selection for a new one. The Giveaway is deliberately not consulted:
+  // a lead-magnet post can auto-DM a link that isn't a stored resource.
+  const automationKindIsLeadMagnet = isNew
+    ? newKind === "lead_magnet"
+    : draft?.kind === "lead_magnet";
+  const automationDraftId = draft?.id ?? createdForAutomationId;
+
+  // Persist the post so the automation panel has an id to load against.
+  const startAutomation = async () => {
+    if (busy || automationStarting) return;
+    setAutomationStarting(true);
+    try {
+      // Returns null (and toasts) when the post has neither a name nor a body,
+      // which is the same bar Save enforces — there is nothing to attach an
+      // automation to yet.
+      const id = await persistBody();
+      if (id) setCreatedForAutomationId(id);
+    } finally {
+      setAutomationStarting(false);
     }
   };
 
@@ -1406,13 +1445,50 @@ export function DraftEditorModal({
                   />
                 )}
 
-                {!isNew && draft && draft.kind === "lead_magnet" && (
-                  // Keyed on draft id so the automation form/enabled/saved state
-                  // can't leak into the next post on prev/next navigation —
-                  // load() only SETS state when data exists, so an unkeyed panel
-                  // would keep (and PUT) the previous post's config.
-                  <LeadSharkPanel key={draft.id} draftId={draft.id} />
-                )}
+                {/* Comment-to-DM automation, for ANY lead-magnet post.
+                    A giveaway resource is deliberately NOT part of the
+                    condition: the API's own eligibility is kind-only
+                    (drafts/[id]/automation), and it prefills the DM with
+                    "your link" when no resource is attached — so gating the UI
+                    on a giveaway hid a feature the backend already supported.
+
+                    On a NEW post there is no id yet and LeadSharkPanel loads by
+                    draft id, so the setup button persists the draft first (the
+                    same move the Cowork schedule panel makes). Opening the
+                    editor still writes nothing; pressing the button is what
+                    creates the post. */}
+                {automationKindIsLeadMagnet &&
+                  (automationDraftId ? (
+                    // Keyed on draft id so the automation form/enabled/saved
+                    // state can't leak into the next post on prev/next
+                    // navigation — load() only SETS state when data exists, so
+                    // an unkeyed panel would keep (and PUT) the previous
+                    // post's config.
+                    <LeadSharkPanel
+                      key={automationDraftId}
+                      draftId={automationDraftId}
+                    />
+                  ) : (
+                    <section className="rounded-xl border border-border bg-card p-3.5">
+                      <button
+                        type="button"
+                        onClick={() => void startAutomation()}
+                        disabled={busy || automationStarting}
+                        className="flex w-full items-center gap-2 text-left text-sm font-medium text-foreground transition-colors hover:text-primary disabled:opacity-60"
+                      >
+                        {automationStarting ? (
+                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                        ) : (
+                          <Zap className="h-4 w-4 shrink-0 text-primary" />
+                        )}
+                        Set up comment-to-DM automation
+                      </button>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Auto-DM everyone who comments. Creates the post first so
+                        the automation has something to attach to.
+                      </p>
+                    </section>
+                  ))}
 
                 {!isNew &&
                   draft &&
