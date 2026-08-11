@@ -74,17 +74,72 @@ describe("creating on demand cannot duplicate the post", () => {
     expect(body).not.toContain("if (initialQueueTarget && createdDraftIdRef.current)");
   });
 
-  it("remembers the created id in state, so the panel actually appears", () => {
-    // A ref alone would not re-render: the post would be created and the
-    // button would just sit there.
+  it("remembers the created id so a second save reuses it", () => {
     const body = code(MODAL);
     expect(body).toContain("setCreatedForAutomationId(id)");
     expect(body).toContain("const automationDraftId = draft?.id ?? createdForAutomationId");
+    // The resolver short-circuits rather than persisting again.
+    expect(body).toContain("if (automationDraftId) return automationDraftId;");
   });
 
-  it("keys the panel on the draft id", () => {
-    // load() only SETS state when data exists, so an unkeyed panel would carry
-    // the previous post's config across prev/next navigation — and PUT it.
-    expect(code(MODAL)).toContain("key={automationDraftId}");
+  it("keys the panel on the draft prop, not the resolved id", () => {
+    // Two reasons, pulling in opposite directions:
+    //  - keyed at all, because load() only SETS state when data exists, so an
+    //    unkeyed panel carries the previous post's config across prev/next
+    //    navigation — and PUTs it.
+    //  - keyed on the PROP, because on a new post the resolved id appears
+    //    mid-session when the automation saves; keying on that would remount
+    //    the panel and discard the form the user had just filled in.
+    expect(code(MODAL)).toContain('key={draft?.id ?? "new"}');
+  });
+});
+
+describe("the form works before the post exists", () => {
+  const PANEL = readFileSync(
+    path.join(process.cwd(), "app/(app)/dashboard/leadshark-panel.tsx"),
+    "utf8",
+  );
+
+  it("renders the panel itself, not a button that gates it", () => {
+    // The first version put a "Set up comment-to-DM automation" button here
+    // that created the post before showing any fields. Being told to create
+    // the post BEFORE you can type the DM is backwards — the fields are the
+    // point, and the post is an implementation detail of saving them.
+    const body = code(MODAL);
+    expect(body).toContain("ensureDraftId={ensureAutomationDraftId}");
+    expect(body).not.toContain("Set up comment-to-DM automation");
+  });
+
+  it("accepts a null draft id", () => {
+    expect(code(PANEL)).toContain("draftId: string | null");
+  });
+
+  it("skips the per-draft GET when there is no draft", () => {
+    // The per-draft route 404s on an id that does not exist yet. Falling back
+    // to the workspace credential check is what keeps "connect LeadShark
+    // first" working on an unsaved post.
+    const body = code(PANEL);
+    expect(body).toContain("if (!draftId) {");
+    expect(body).toContain('"/api/integrations/leadshark"');
+  });
+
+  it("creates the post on SAVE, never on mount", () => {
+    // The whole point of the redesign: opening the editor must still write
+    // nothing. If ensureDraftId were called from load(), merely selecting
+    // "Lead Magnet Post" would start creating rows.
+    const body = code(PANEL);
+    const loadStart = body.indexOf("const load = useCallback");
+    const loadEnd = body.indexOf("const patch =");
+    expect(loadStart).toBeGreaterThan(-1);
+    expect(body.slice(loadStart, loadEnd)).not.toContain("ensureDraftId");
+    expect(body).toContain("await ensureDraftId?.()");
+  });
+
+  it("writes to the resolved id, so one save cannot become two posts", () => {
+    const body = code(PANEL);
+    expect(body).toContain("const targetId = resolvedId ?? (await ensureDraftId?.()) ?? null");
+    expect(body).toContain("`/api/drafts/${targetId}/automation`");
+    // Delete has to follow the same id, not the (possibly null) prop.
+    expect(body).toContain("`/api/drafts/${resolvedId}/automation`");
   });
 });

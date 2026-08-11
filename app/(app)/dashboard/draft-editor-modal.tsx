@@ -22,7 +22,6 @@ import {
 } from "@/lib/draft-operations-client";
 import {
   Loader2,
-  Zap,
   ChevronUp,
   ChevronDown,
   Copy,
@@ -209,7 +208,6 @@ export function DraftEditorModal({
   const [createdForAutomationId, setCreatedForAutomationId] = useState<string | null>(
     null,
   );
-  const [automationStarting, setAutomationStarting] = useState(false);
   const [body, setBody] = useState(draft?.body ?? "");
   const [saving, setSaving] = useState(false);
   const [copied, markCopied] = useCopiedFlag();
@@ -449,19 +447,17 @@ export function DraftEditorModal({
     : draft?.kind === "lead_magnet";
   const automationDraftId = draft?.id ?? createdForAutomationId;
 
-  // Persist the post so the automation panel has an id to load against.
-  const startAutomation = async () => {
-    if (busy || automationStarting) return;
-    setAutomationStarting(true);
-    try {
-      // Returns null (and toasts) when the post has neither a name nor a body,
-      // which is the same bar Save enforces — there is nothing to attach an
-      // automation to yet.
-      const id = await persistBody();
-      if (id) setCreatedForAutomationId(id);
-    } finally {
-      setAutomationStarting(false);
-    }
+  // Called when the automation is SAVED, not when the panel opens: the form is
+  // usable on an unsaved post, and pressing Save is what commits both.
+  //
+  // persistBody returns null (and toasts) when the post has neither a name nor
+  // a body — the same bar Save enforces, since there is nothing to attach an
+  // automation to yet.
+  const ensureAutomationDraftId = async (): Promise<string | null> => {
+    if (automationDraftId) return automationDraftId;
+    const id = await persistBody();
+    if (id) setCreatedForAutomationId(id);
+    return id;
   };
 
   const save = async () => {
@@ -1457,38 +1453,22 @@ export function DraftEditorModal({
                     same move the Cowork schedule panel makes). Opening the
                     editor still writes nothing; pressing the button is what
                     creates the post. */}
-                {automationKindIsLeadMagnet &&
-                  (automationDraftId ? (
-                    // Keyed on draft id so the automation form/enabled/saved
-                    // state can't leak into the next post on prev/next
-                    // navigation — load() only SETS state when data exists, so
-                    // an unkeyed panel would keep (and PUT) the previous
-                    // post's config.
-                    <LeadSharkPanel
-                      key={automationDraftId}
-                      draftId={automationDraftId}
-                    />
-                  ) : (
-                    <section className="rounded-xl border border-border bg-card p-3.5">
-                      <button
-                        type="button"
-                        onClick={() => void startAutomation()}
-                        disabled={busy || automationStarting}
-                        className="flex w-full items-center gap-2 text-left text-sm font-medium text-foreground transition-colors hover:text-primary disabled:opacity-60"
-                      >
-                        {automationStarting ? (
-                          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                        ) : (
-                          <Zap className="h-4 w-4 shrink-0 text-primary" />
-                        )}
-                        Set up comment-to-DM automation
-                      </button>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Auto-DM everyone who comments. Creates the post first so
-                        the automation has something to attach to.
-                      </p>
-                    </section>
-                  ))}
+                {automationKindIsLeadMagnet && (
+                  // Keyed so the automation form/enabled/saved state can't leak
+                  // into the next post on prev/next navigation — load() only
+                  // SETS state when data exists, so an unkeyed panel would keep
+                  // (and PUT) the previous post's config.
+                  //
+                  // Keyed on the DRAFT PROP, not the resolved id: on a new post
+                  // that id appears mid-session once the automation is saved,
+                  // and keying on it would remount the panel and throw away the
+                  // form the user had just filled in.
+                  <LeadSharkPanel
+                    key={draft?.id ?? "new"}
+                    draftId={automationDraftId}
+                    ensureDraftId={ensureAutomationDraftId}
+                  />
+                )}
 
                 {!isNew &&
                   draft &&
