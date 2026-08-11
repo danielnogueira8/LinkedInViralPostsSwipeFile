@@ -164,12 +164,28 @@ function StatusBanner({ status, error }: { status: AutomationStatus; error: stri
 // all its data comes from /api/drafts/:id/automation, so it needs nothing else.
 // This lets it mount from the Cowork chat draft card as well as the Posts-board
 // draft editor.
-export function LeadSharkPanel({ draftId }: { draftId: string }) {
+export function LeadSharkPanel({
+  draftId,
+  ensureDraftId,
+}: {
+  /** null while the post is still unsaved — the form stays usable regardless. */
+  draftId: string | null;
+  /**
+   * Create the post and return its id. Called on SAVE, not on mount, so
+   * opening the editor never writes a row but filling the form in works
+   * immediately. Required whenever draftId can be null.
+   */
+  ensureDraftId?: () => Promise<string | null>;
+}) {
   const [loaded, setLoaded] = useState(false);
   const [data, setData] = useState<GetResponse | null>(null);
   const [enabled, setEnabled] = useState(false);
   const [form, setForm] = useState<FormState>(blankForm());
   const [busy, setBusy] = useState(false);
+  // The id this panel actually writes to. Starts as the prop and is filled in
+  // by ensureDraftId on the first save of a not-yet-created post, so the
+  // follow-up save/remove target the same row instead of creating another.
+  const [resolvedId, setResolvedId] = useState<string | null>(draftId);
   // Whether a config has been persisted for this draft (drives the Remove
   // button). State, not a ref, so it re-renders — and so it's never read during
   // render from a ref.
@@ -177,6 +193,28 @@ export function LeadSharkPanel({ draftId }: { draftId: string }) {
 
   const load = useCallback(async () => {
     try {
+      // No draft yet (a new post still being written). There is nothing to GET
+      // per-draft, but the form must still be usable — being told to create the
+      // post BEFORE you can type the DM is backwards. Ask the workspace-level
+      // endpoint for the one thing that genuinely gates the UI, whether
+      // LeadShark is connected at all, and start from a blank form.
+      if (!draftId) {
+        const res = await fetchJson<{
+          ok: boolean;
+          credential?: { connected?: boolean };
+        }>("/api/integrations/leadshark", { cache: "no-store" });
+        setData({
+          ok: true,
+          // Eligibility is the caller's call here: it only mounts this panel
+          // for a lead-magnet post, which is the same rule the per-draft route
+          // applies (kind alone).
+          eligible: true,
+          credentialConnected: res.ok && res.credential?.connected === true,
+          automation: null,
+          prefill: null,
+        });
+        return;
+      }
       const res = await fetchJson<GetResponse>(
         `/api/drafts/${draftId}/automation`,
         { cache: "no-store" },
@@ -221,8 +259,19 @@ export function LeadSharkPanel({ draftId }: { draftId: string }) {
     }
     setBusy(true);
     try {
+      // Creating the post is part of SAVING the automation, not a prerequisite
+      // for opening the form. ensureDraftId returns the existing id when there
+      // already is one, so this cannot mint a second post.
+      const targetId = resolvedId ?? (await ensureDraftId?.()) ?? null;
+      if (!targetId) {
+        // ensureDraftId already explained why (an empty post has no name or
+        // body to save), so don't stack a second toast on top of it.
+        setBusy(false);
+        return;
+      }
+      if (targetId !== resolvedId) setResolvedId(targetId);
       const res = await fetchJson<{ ok: boolean; error?: string; automation?: ServerAutomation }>(
-        `/api/drafts/${draftId}/automation`,
+        `/api/drafts/${targetId}/automation`,
         {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -243,10 +292,12 @@ export function LeadSharkPanel({ draftId }: { draftId: string }) {
   };
 
   const removeAutomation = async () => {
+    // Only reachable once `saved` is true, which means a save resolved an id.
+    if (!resolvedId) return;
     setBusy(true);
     try {
       const res = await fetchJson<{ ok: boolean; error?: string }>(
-        `/api/drafts/${draftId}/automation`,
+        `/api/drafts/${resolvedId}/automation`,
         { method: "DELETE" },
       );
       if (!res.ok) throw new Error(res.error || "Couldn't remove the automation.");
