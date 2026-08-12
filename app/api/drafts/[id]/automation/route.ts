@@ -4,7 +4,6 @@ import { scopedSupabase } from "@/lib/supabase-scoped";
 import { errorResponse } from "@/lib/workspace";
 import { createSupabaseDraftLifecycleRepository } from "@/lib/draft-lifecycle-supabase";
 import { artifactLeadMagnet } from "@/lib/chat-artifact-policy";
-import { inferCommentKeyword } from "@/lib/lead-magnet-image-generation";
 import { getCredentialSafe } from "@/lib/leadshark-credentials";
 import {
   getAutomationForArtifact,
@@ -13,12 +12,11 @@ import {
 } from "@/lib/leadshark-automations";
 import {
   validateAutomationConfig,
-  defaultDmTemplate,
   type AutomationConfigDraft,
 } from "@/lib/leadshark-config";
 import { MAX_KEYWORDS } from "@/lib/leadshark";
 import { getLeadSharkAutomationDefaults } from "@/lib/leadshark-defaults";
-import { materializeLeadSharkAutomationDefaults } from "@/lib/leadshark-default-config";
+import { buildAutomationPrefill } from "@/lib/leadshark-prefill";
 
 export const runtime = "nodejs";
 
@@ -74,9 +72,6 @@ export async function GET(
       config: AutomationConfigDraft;
     } | null = null;
     if (isLeadMagnet) {
-      const title = lm?.title ?? "resource";
-      const slug = lm?.publicSlug ?? null;
-      const url = slug ? `${originFrom(req)}/lm/${slug}` : "";
       const { data: marker } = await sb.raw
         .from("app_schema_version")
         .select("version")
@@ -86,37 +81,14 @@ export async function GET(
         (marker?.version ?? 0) >= 153
           ? await getLeadSharkAutomationDefaults(sb.workspaceId, sb.raw)
           : null;
-      const keyword = inferCommentKeyword(
-        draft.body ?? "",
-        lm?.title ?? "",
-      );
-      const config = savedDefaults
-        ? materializeLeadSharkAutomationDefaults(savedDefaults, {
-            name: title,
-            url: url || "your link",
-            keyword,
-          })
-        : {
-            keywords: [keyword].filter(Boolean),
-            dmTemplate: defaultDmTemplate(title, url || "your link"),
-            dmTemplateVariations: [],
-            commentReplyTemplates: [],
-            nonConnectionReplyTemplates: [],
-            autoConnect: false,
-            autoLike: false,
-            followUpEnabled: false,
-            followUpTemplate: null,
-            followUpDelayMinutes: 60,
-            followUpOnlyIfNoResponse: true,
-          };
-      prefill = {
-        keyword: config.keywords[0] ?? "",
-        dmTemplate: config.dmTemplate,
-        leadMagnetId: lm?.id ?? null,
-        leadMagnetTitle: lm?.title ?? null,
-        leadMagnetUrl: url || null,
-        config,
-      };
+      // Shared with the not-yet-created-post route so a new post and a saved
+      // one cannot start from different configs.
+      prefill = buildAutomationPrefill({
+        leadMagnet: lm,
+        body: draft.body ?? "",
+        origin: originFrom(req),
+        savedDefaults,
+      });
     }
 
     return NextResponse.json({

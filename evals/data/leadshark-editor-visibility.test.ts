@@ -115,12 +115,14 @@ describe("the form works before the post exists", () => {
   });
 
   it("skips the per-draft GET when there is no draft", () => {
-    // The per-draft route 404s on an id that does not exist yet. Falling back
-    // to the workspace credential check is what keeps "connect LeadShark
-    // first" working on an unsaved post.
+    // The per-draft route 404s on an id that does not exist yet. The prefill
+    // route answers instead — it carries BOTH the credential status and the
+    // workspace's saved defaults, which the first version of this branch was
+    // missing entirely (see leadshark-prefill.test.ts).
     const body = code(PANEL);
     expect(body).toContain("if (!draftId) {");
-    expect(body).toContain('"/api/integrations/leadshark"');
+    expect(body).toContain('"/api/drafts/automation-prefill"');
+    expect(body).toContain("credentialConnected: res.ok && res.credentialConnected === true");
   });
 
   it("creates the post on SAVE, never on mount", () => {
