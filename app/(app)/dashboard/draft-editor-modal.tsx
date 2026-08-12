@@ -1467,6 +1467,13 @@ export function DraftEditorModal({
                     key={draft?.id ?? "new"}
                     draftId={automationDraftId}
                     ensureDraftId={ensureAutomationDraftId}
+                    // Only read on a post that has no id yet, so the prefill it
+                    // starts from matches the one the post will carry once
+                    // created — same giveaway, same body for keyword inference.
+                    prefillContext={{
+                      leadMagnetId: newLeadMagnetId || null,
+                      body,
+                    }}
                   />
                 )}
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { toast } from "sonner";
 import { Zap, Loader2, AlertTriangle, CheckCircle2 } from "lucide-react";
@@ -167,6 +167,7 @@ function StatusBanner({ status, error }: { status: AutomationStatus; error: stri
 export function LeadSharkPanel({
   draftId,
   ensureDraftId,
+  prefillContext,
 }: {
   /** null while the post is still unsaved — the form stays usable regardless. */
   draftId: string | null;
@@ -176,6 +177,12 @@ export function LeadSharkPanel({
    * immediately. Required whenever draftId can be null.
    */
   ensureDraftId?: () => Promise<string | null>;
+  /**
+   * What the unsaved post currently says, so its prefill matches the one it
+   * will get once created. Ignored when draftId is set — the post itself is
+   * then the better source.
+   */
+  prefillContext?: { leadMagnetId: string | null; body: string };
 }) {
   const [loaded, setLoaded] = useState(false);
   const [data, setData] = useState<GetResponse | null>(null);
@@ -186,6 +193,13 @@ export function LeadSharkPanel({
   // by ensureDraftId on the first save of a not-yet-created post, so the
   // follow-up save/remove target the same row instead of creating another.
   const [resolvedId, setResolvedId] = useState<string | null>(draftId);
+  // Read through a ref so `load` keeps a [draftId] dep list. Putting the
+  // context in the deps would re-run the fetch on every keystroke of the post
+  // body and overwrite whatever the user had typed into the form.
+  const prefillContextRef = useRef(prefillContext);
+  useEffect(() => {
+    prefillContextRef.current = prefillContext;
+  });
   // Whether a config has been persisted for this draft (drives the Remove
   // button). State, not a ref, so it re-renders — and so it's never read during
   // render from a ref.
@@ -193,26 +207,46 @@ export function LeadSharkPanel({
 
   const load = useCallback(async () => {
     try {
-      // No draft yet (a new post still being written). There is nothing to GET
-      // per-draft, but the form must still be usable — being told to create the
-      // post BEFORE you can type the DM is backwards. Ask the workspace-level
-      // endpoint for the one thing that genuinely gates the UI, whether
-      // LeadShark is connected at all, and start from a blank form.
+      // No draft yet (a new post still being written). The per-draft route
+      // cannot answer without an id, so ask the prefill route — which runs the
+      // SAME builder — for the workspace's saved defaults.
+      //
+      // Starting blank here was a real bug: the form ignored a workspace's
+      // configured defaults until the post existed, so people created the post,
+      // reopened it, and watched the same screen suddenly fill itself in. That
+      // reads as "my settings didn't save".
       if (!draftId) {
         const res = await fetchJson<{
           ok: boolean;
-          credential?: { connected?: boolean };
-        }>("/api/integrations/leadshark", { cache: "no-store" });
+          credentialConnected?: boolean;
+          prefill?: GetResponse["prefill"];
+        }>("/api/drafts/automation-prefill", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            leadMagnetId: prefillContextRef.current?.leadMagnetId ?? null,
+            body: prefillContextRef.current?.body ?? "",
+          }),
+        });
         setData({
           ok: true,
           // Eligibility is the caller's call here: it only mounts this panel
           // for a lead-magnet post, which is the same rule the per-draft route
           // applies (kind alone).
           eligible: true,
-          credentialConnected: res.ok && res.credential?.connected === true,
+          credentialConnected: res.ok && res.credentialConnected === true,
           automation: null,
-          prefill: null,
+          prefill: res.prefill ?? null,
         });
+        if (res.ok && res.prefill) {
+          // Same seeding as the saved-post path below: fill the fields, leave
+          // the toggle off until the user opts in.
+          setForm((f) => ({
+            ...f,
+            ...res.prefill!.config,
+            leadMagnetId: res.prefill!.leadMagnetId,
+          }));
+        }
         return;
       }
       const res = await fetchJson<GetResponse>(
@@ -242,7 +276,6 @@ export function LeadSharkPanel({
 
   useEffect(() => {
     // Mount fetch of the automation config from the API (an external system).
-    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
