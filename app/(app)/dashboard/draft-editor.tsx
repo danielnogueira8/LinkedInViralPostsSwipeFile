@@ -977,34 +977,21 @@ function AskPrompt({
 
   useEffect(() => {
     inputRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape") return;
-      // CAPTURE phase + stopPropagation: the dialog's own Escape dismiss
-      // (Base UI useDismiss) listens on document in the BUBBLE phase and
-      // ignores defaultPrevented, so a plain bubble listener here would close
-      // the prompt AND the whole editor dialog on one keypress.
-      e.stopPropagation();
-      onClose();
-    };
-    // Dismiss on a click anywhere outside the prompt. Escape alone left the box
-    // stranded over the draft when the user simply clicked away — the usual way
-    // people abandon a popover.
-    //
-    // Bound on MOUSEDOWN, not click: the box already stops propagation of
-    // mousedown (so clicking inside can't blur the textarea), which means a
-    // mousedown listener is dismissed correctly by that same guard. A click
-    // listener would also fire after a text selection drag that ENDS outside
-    // the box, closing the prompt mid-gesture.
-    const onDown = (e: MouseEvent) => {
-      if (!boxRef.current?.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener("keydown", onKey, true);
-    document.addEventListener("mousedown", onDown);
-    return () => {
-      document.removeEventListener("keydown", onKey, true);
-      document.removeEventListener("mousedown", onDown);
-    };
-  }, [onClose]);
+  }, []);
+
+  // Dismiss on Escape, or on a mousedown anywhere outside the prompt — Escape
+  // alone left the box stranded over the draft when the user simply clicked
+  // away, the usual way people abandon a popover.
+  //
+  // Mousedown rather than click, deliberately: the box stops propagation of
+  // mousedown (so clicking inside can't blur the textarea), and a click
+  // listener would also fire after a text-selection drag that ENDS outside the
+  // box, closing the prompt mid-gesture.
+  //
+  // The registration is deferred a frame — see useDismissOnOutside. Ask AI
+  // opens on mousedown, so a listener bound synchronously caught the opening
+  // event and closed the prompt before it could be typed into.
+  useDismissOnOutside(boxRef, onClose);
 
   const submit = () => {
     const t = text.trim();
@@ -1087,15 +1074,27 @@ async function consumeSSE(
   }
 }
 
-function EmojiPicker({
-  onPick,
-  onClose,
-}: {
-  onPick: (emoji: string) => void;
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  // Close on outside click / Escape.
+/**
+ * Dismiss a popover on an outside mousedown or Escape.
+ *
+ * THE DEFERRED REGISTRATION IS THE WHOLE POINT — without it the popover closes
+ * itself the instant it opens, and the button looks dead.
+ *
+ * Every control that opens one of these fires on MOUSEDOWN, not click
+ * (ToolbarButton and the floating toolbar both preventDefault on mousedown so
+ * the textarea keeps its selection). So the popover mounts while that mousedown
+ * is still being dispatched, this effect runs, and the very same event then
+ * continues bubbling up to document — where a listener added synchronously sees
+ * a target outside the popover and closes it. Verified in Chromium: a document
+ * listener registered during a descendant's mousedown does receive that event.
+ *
+ * Waiting a frame puts registration after the current event finishes
+ * dispatching, whatever React's effect-flush timing happens to be.
+ */
+function useDismissOnOutside(
+  ref: React.RefObject<HTMLElement | null>,
+  onClose: () => void,
+) {
   useEffect(() => {
     function onDown(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
@@ -1105,19 +1104,35 @@ function EmojiPicker({
       // CAPTURE phase + stopPropagation: the dialog's own Escape dismiss
       // (Base UI useDismiss) listens on document in the BUBBLE phase and
       // ignores defaultPrevented, so a plain bubble listener here would close
-      // the picker AND the whole editor dialog on one keypress. Focus stays on
-      // the textarea while the picker is open, so an element-level handler
-      // can't intercept it — the picker isn't an ancestor of the textarea.
+      // the popover AND the whole editor dialog on one keypress. Focus stays on
+      // the textarea while it is open, so an element-level handler can't
+      // intercept it — the popover isn't an ancestor of the textarea.
       e.stopPropagation();
       onClose();
     }
-    document.addEventListener("mousedown", onDown);
+    // Escape can bind immediately: no keydown is in flight when a popover is
+    // opened by the mouse.
     document.addEventListener("keydown", onKey, true);
+    const frame = requestAnimationFrame(() => {
+      document.addEventListener("mousedown", onDown);
+    });
     return () => {
+      cancelAnimationFrame(frame);
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey, true);
     };
-  }, [onClose]);
+  }, [ref, onClose]);
+}
+
+function EmojiPicker({
+  onPick,
+  onClose,
+}: {
+  onPick: (emoji: string) => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useDismissOnOutside(ref, onClose);
 
   return (
     <div
