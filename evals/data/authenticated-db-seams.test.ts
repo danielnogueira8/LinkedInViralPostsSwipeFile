@@ -42,6 +42,13 @@ const ALLOWED_ADMIN_APP_FILES = new Set([
   // to scope to. Admin-or-CRON_SECRET, read only, and it reads nothing beyond
   // draft timestamps, schedule status, and edit counts — no bodies.
   "app/api/internal/agent-predraft-stats/route.ts",
+  // Re-classifies post_type across the GLOBAL posts corpus. posts is shared —
+  // two workspaces routinely track the same creator — so a workspace-scoped
+  // client is the wrong tool: this corrects a column every workspace reads,
+  // using the same global classifier ingest uses. Admin-or-CRON_SECRET.
+  // Reads on GET; only POST + ?apply=1 writes, and it touches nothing but
+  // post_type / post_type_detected_via.
+  "app/api/internal/backfill-post-type/route.ts",
   "app/lm/[slug]/page.tsx", // intentionally public resource lookup
 ]);
 
