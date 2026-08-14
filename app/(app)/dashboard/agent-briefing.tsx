@@ -290,6 +290,18 @@ export function AgentBriefing() {
     // system). refresh is memoized so this runs on mount and when it changes.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void refresh();
+    // The opportunity pool is repopulated by a daily cron (scanAgentOpportunities,
+    // 06:00 UTC) — a tab left open across that boundary would otherwise keep
+    // showing the stale morning pool until the user acts on a card or reloads.
+    // Refetch whenever the tab regains focus, same pattern as the chat list sync
+    // in chat-workspace.tsx.
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refresh]);
 
   // Review → mark the draft reviewed (so it stays off this list across reloads),
