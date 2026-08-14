@@ -64,6 +64,12 @@ function matchesAllCapsLeadMagnet(text: string): boolean {
   return !ALLCAPS_STOPLIST.has(m[1]);
 }
 
+// The things creators actually give away. Used to keep "giving away" and the
+// "free X" patterns anchored to a real resource, so ordinary English ("giving
+// away the ending", "free speech") doesn't read as a lead magnet.
+const RESOURCE_NOUNS =
+  "course|playbook|guide|template|templates|system|toolkit|framework|checklist|swipe\\s*file|prompt|prompts|library|resource|resources|training|workshop|audit|cop(?:y|ies)|breakdown|masterclass|ebook|book|deck|spreadsheet|notion|sop|sops|kit|pack|bundle|access|blueprint|tracker|calculator|database|cheat\\s*sheet";
+
 const LEAD_MAGNET_PATTERNS: RegExp[] = [
   // Pattern A: quoted keyword or number after a CTA verb.
   // "comment 'PLAYBOOK'", "drop 'SCALE' below", "comment '10'"
@@ -74,8 +80,9 @@ const LEAD_MAGNET_PATTERNS: RegExp[] = [
     `(?:^|[.!?\\n]\\s*)say\\s+${QUOTED_KEYWORD}${IMPERATIVE_SAY_DELIVERY}`,
     "i",
   ),
-  // "I'll DM it", "I'll send you the link"
-  /\bi['’]?ll\s+(?:dm|send|share)\s+(?:it|you|them|the\s+link)/i,
+  // "I'll DM it", "I'll send you the link" — and the uncontracted "I will
+  // send you", which real posts use just as often and this missed entirely.
+  /\bi(?:['’]?ll|\s+will)\s+(?:dm|send|share)\s+(?:it|you|them|the\s+link)/i,
   // "DM me 'X'", "send me 'X' in DMs"
   new RegExp(`\\b(?:dm|message|send)\\s+me\\s+${KEYWORD}`, "i"),
   // gating: must be connected / follow first
@@ -85,6 +92,46 @@ const LEAD_MAGNET_PATTERNS: RegExp[] = [
   /\bcomment\s+\S+\s+(?:for|to\s+get|and\s+i)\b/i,
   // "want the [thing]? comment/drop X"
   /\bwant\s+(?:the|my|this|a\s+copy)\b[^.?!]{0,80}\?\s*(?:comment|drop|reply|dm)\b/i,
+
+  // ---------------------------------------------------------------------
+  // GIVEAWAY-FIRST CTAs.
+  //
+  // The patterns above all assume the post names a mechanism — comment this
+  // keyword, DM me that word. A lot of lead magnets now just announce the
+  // giveaway and point down ("Get free access below 👇", "I'm giving away the
+  // full course for free"), leaving the mechanism implicit. Those were
+  // classified as regular posts, which sends them to the wrong discovery
+  // threshold: lead magnets qualify on comments, regular posts on likes.
+  // ---------------------------------------------------------------------
+
+  // "I'm giving away…", "we're giving away…". Anchored on a first-person
+  // subject so the idiom ("that's giving away the ending", "giving away my
+  // age") doesn't trip it.
+  /\b(?:i['’]?m|i\s+am|we['’]?re|we\s+are|i['’]?ll\s+be)\s+giving\s+(?:it\s+|them\s+|these\s+)?away\b/i,
+  // "giving away my playbook", "giving away the full course".
+  //
+  // A determiner alone is NOT enough: "that's giving away the ending" and
+  // "giving away the game" are ordinary idioms and were false-positiving. The
+  // object has to be an actual resource, with room for a couple of adjectives
+  // in between ("giving away the full course").
+  new RegExp(
+    `\\bgiving\\s+away\\s+(?:my|our|the|a|an|all|\\d+)\\s+(?:\\w+\\s+){0,2}(?:${RESOURCE_NOUNS})`,
+    "i",
+  ),
+  // "sharing it for free", "handing this out for free"
+  /\b(?:giving|sharing|sending|handing)\s+(?:it|them|this|these|everything|all\s+of\s+it)?\s*(?:out\s+)?for\s+free\b/i,
+
+  // "Free access." / "get free access below 👇" / "free copy" / "complimentary
+  // audit". `access` is in the noun list, so the phrasing that prompted this
+  // is covered here rather than by a rule of its own — a separate
+  // /\bfree\s+access\b/ was redundant, which mutation testing caught by
+  // deleting it and watching every test still pass.
+  //
+  // The noun list is what keeps this from firing on every use of "free"
+  // ("free speech", "feel free to disagree").
+  new RegExp(`\\b(?:free|complimentary)\\s+(?:${RESOURCE_NOUNS})\\b`, "i"),
+  // "grab it free", "download yours for free", "claim your copy free"
+  /\b(?:grab|get|download|claim|snag|take)\s+(?:it|yours|your\s+copy|the\s+\w+)\s+(?:for\s+)?free\b/i,
 ];
 
 // Cap input length before running the regex sweep. LinkedIn posts max out
