@@ -169,3 +169,67 @@ describe("backfill script safety", () => {
     expect(code(SCRIPT)).toContain("if (includeDemotions) writes.push(");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Running the backfill on production.
+//
+// The script needs a local .env.local with the service-role key, which is the
+// one place it does not exist for most people. This endpoint does the same job
+// where the credentials already live.
+// ---------------------------------------------------------------------------
+describe("the production backfill endpoint", () => {
+  const ROUTE = readFileSync(
+    path.join(process.cwd(), "app/api/internal/backfill-post-type/route.ts"),
+    "utf8",
+  );
+
+  function code(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split("\n")
+      .filter((line) => !line.trim().startsWith("//"))
+      .join("\n");
+  }
+
+  it("cannot write on GET, whatever the query string says", () => {
+    // A backfill URL is exactly the kind of thing that ends up pasted into a
+    // browser or a chat window. GET must be inert.
+    const body = code(ROUTE);
+    expect(body).toContain("export async function GET(req: Request) {\n  return run(req, false);");
+    expect(body).toContain("export async function POST(req: Request) {\n  return run(req, true);");
+  });
+
+  it("requires an explicit apply flag on top of POST", () => {
+    expect(code(ROUTE)).toContain('canWrite && url.searchParams.get("apply") === "1"');
+  });
+
+  it("keeps demotions behind their own flag", () => {
+    expect(code(ROUTE)).toContain("if (includeDemotions) writes.push(");
+  });
+
+  it("is admin-or-secret, never user-facing", () => {
+    const body = code(ROUTE);
+    expect(body).toContain("authorizedBySecret(req)");
+    expect(body).toContain("await requireAdmin()");
+  });
+
+  it("uses the same planner as the script", () => {
+    // Two implementations of "which posts change" is how they drift.
+    expect(code(ROUTE)).toContain("planPostTypeBackfill(rows)");
+  });
+
+  it("stops before the function ceiling and says where to resume", () => {
+    // A silent truncation would read as "the corpus is clean".
+    const body = code(ROUTE);
+    expect(body).toContain("TIME_BUDGET_MS");
+    expect(body).toContain("nextFrom");
+    expect(body).toContain("exhausted");
+  });
+
+  it("is not wired into the cron schedule", () => {
+    // A one-time correction on a timer would re-scan the table forever to find
+    // nothing, and leave a bulk-write endpoint firing unattended.
+    const vercel = readFileSync(path.join(process.cwd(), "vercel.json"), "utf8");
+    expect(vercel).not.toContain("backfill-post-type");
+  });
+});
