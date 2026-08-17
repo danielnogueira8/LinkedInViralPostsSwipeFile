@@ -13,6 +13,11 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     // Local agent checkouts and generated test artifacts are not owned source.
+    // .agents/** is vendored skill content (npx skills add): third-party docs
+    // with example .ts/.tsx snippets that import packages we don't depend on.
+    // Nothing there is built or shipped — linting it to our rules would mean
+    // maintaining someone else's examples. .claude/** is symlinks into it.
+    ".agents/**",
     ".claude/**",
     ".worktrees/**",
     "coverage/**",
